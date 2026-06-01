@@ -2,6 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -88,6 +89,7 @@ export function DayScreen({ navigation, route }: Props) {
   const [lastWeights, setLastWeights] = useState<Map<string, number>>(new Map());
   const [increaseFlags, setIncreaseFlags] = useState<Set<string>>(new Set());
   const [completedAt, setCompletedAt] = useState<number | null>(null);
+  const [highlightMissing, setHighlightMissing] = useState<Set<string>>(() => new Set());
   const sessionIdRef = useRef<string | null>(null);
 
   useLayoutEffect(() => {
@@ -139,6 +141,16 @@ export function DayScreen({ navigation, route }: Props) {
       ...prev,
       [key]: { ...EMPTY_LOG, ...prev[key], ...patch },
     }));
+    if (patch.weight !== undefined && parseOptionalFloat(patch.weight) !== null) {
+      setHighlightMissing((highlights) => {
+        if (!highlights.has(key)) {
+          return highlights;
+        }
+        const next = new Set(highlights);
+        next.delete(key);
+        return next;
+      });
+    }
   }, []);
 
   const persist = useCallback(
@@ -153,16 +165,51 @@ export function DayScreen({ navigation, route }: Props) {
     [logs],
   );
 
-  const onComplete = useCallback(() => {
+  const finishSession = useCallback(() => {
     const sessionId = sessionIdRef.current;
     if (!sessionId) {
       return;
     }
+    setHighlightMissing(new Set());
     void (async () => {
       const ts = await completeSession(sessionId);
       setCompletedAt(ts);
     })();
   }, []);
+
+  const onComplete = useCallback(() => {
+    if (!day) {
+      return;
+    }
+    const missing: string[] = [];
+    for (const exercise of day.exercises) {
+      if (exercise.bodyweight) {
+        continue;
+      }
+      const exKey = exerciseKey(exercise.name);
+      for (let i = 0; i < exercise.sets; i++) {
+        const key = logKey(exKey, i);
+        const log = logs[key] ?? EMPTY_LOG;
+        if (parseOptionalFloat(log.weight) === null) {
+          missing.push(key);
+        }
+      }
+    }
+    if (missing.length === 0) {
+      finishSession();
+      return;
+    }
+    setHighlightMissing(new Set(missing));
+    const count = missing.length;
+    Alert.alert(
+      'Missing workout data',
+      `${count} set${count === 1 ? '' : 's'} ${count === 1 ? 'is' : 'are'} missing a weight. Add it now or finish anyway — you can update later.`,
+      [
+        { text: 'Go back', style: 'cancel' },
+        { text: 'Finish anyway', onPress: finishSession },
+      ],
+    );
+  }, [day, logs, finishSession]);
 
   if (!day) {
     return (
@@ -230,7 +277,11 @@ export function DayScreen({ navigation, route }: Props) {
                       {exercise.bodyweight ? 'BW' : last != null ? String(last) : '–'}
                     </Text>
                     <TextInput
-                      style={[styles.colInput, styles.input]}
+                      style={[
+                        styles.colInput,
+                        styles.input,
+                        highlightMissing.has(key) && styles.inputMissing,
+                      ]}
                       placeholder="–"
                       placeholderTextColor={colors.muted}
                       keyboardType="decimal-pad"
@@ -413,6 +464,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 15,
     fontFamily: fonts.regular,
+  },
+  inputMissing: {
+    borderColor: colors.accent,
+    borderWidth: 2,
   },
   completedBadge: {
     alignSelf: 'center',
