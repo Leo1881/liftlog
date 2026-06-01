@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "lift",
+    "name": "LiftLog",
     "slug": "lift",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -16,6 +16,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.leaveiljohnson.lift",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -25,6 +26,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8394009d-06db-4427-92df-e56c3521fae0"
+      }
     }
   }
 }
