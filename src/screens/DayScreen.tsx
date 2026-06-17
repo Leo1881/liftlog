@@ -20,13 +20,13 @@ import {
   getIncreaseFlags,
   getOrCreateTodaySession,
   getSessionCompletedAt,
-  loadLastWeights,
+  loadLastSetRefs,
   loadSessionLogs,
   saveSetLog,
   type SetValues,
 } from '../db/workouts';
 import type { RootStackParamList } from '../navigation/types';
-import { getRoutineDay } from '../routine';
+import { exerciseSetSummary, getRoutineDay, targetRepsForSet } from '../routine';
 import { colors, fonts, spacing } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Day'>;
@@ -71,6 +71,13 @@ function formatCompleted(ts: number): string {
   });
 }
 
+function formatLastRpe(rpe: number | null | undefined): string {
+  if (rpe == null) {
+    return '–';
+  }
+  return Number.isInteger(rpe) ? String(rpe) : String(Math.round(rpe * 10) / 10);
+}
+
 function toValues(log: SetLog): SetValues {
   return {
     weight: parseOptionalFloat(log.weight),
@@ -86,7 +93,9 @@ export function DayScreen({ navigation, route }: Props) {
 
   const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<Record<string, SetLog>>({});
-  const [lastWeights, setLastWeights] = useState<Map<string, number>>(new Map());
+  const [lastRefs, setLastRefs] = useState<Map<string, { weight: number | null; rpe: number | null }>>(
+    new Map(),
+  );
   const [increaseFlags, setIncreaseFlags] = useState<Set<string>>(new Set());
   const [completedAt, setCompletedAt] = useState<number | null>(null);
   const [highlightMissing, setHighlightMissing] = useState<Set<string>>(() => new Set());
@@ -103,7 +112,7 @@ export function DayScreen({ navigation, route }: Props) {
       sessionIdRef.current = sessionId;
       const [stored, last, flags, completed] = await Promise.all([
         loadSessionLogs(sessionId),
-        loadLastWeights(sessionId, dayId),
+        loadLastSetRefs(sessionId, dayId),
         getIncreaseFlags(dayId),
         getSessionCompletedAt(sessionId),
       ]);
@@ -118,15 +127,16 @@ export function DayScreen({ navigation, route }: Props) {
         for (let i = 0; i < exercise.sets; i++) {
           const key = logKey(exKey, i);
           const row = stored.get(key);
+          const targetReps = targetRepsForSet(exercise, i);
           initial[key] = {
             weight: row?.weight != null ? String(row.weight) : '',
-            reps: row?.reps != null ? String(row.reps) : exercise.reps,
+            reps: row?.reps != null ? String(row.reps) : targetReps,
             rpe: row?.rpe != null ? String(row.rpe) : '',
           };
         }
       }
       setLogs(initial);
-      setLastWeights(last);
+      setLastRefs(last);
       setIncreaseFlags(flags);
       setCompletedAt(completed);
       setLoading(false);
@@ -246,9 +256,7 @@ export function DayScreen({ navigation, route }: Props) {
             >
               <View style={styles.blockHeader}>
                 <Text style={styles.exerciseName}>{exercise.name}</Text>
-                <Text style={styles.target}>
-                  {exercise.sets} × {exercise.reps}
-                </Text>
+                <Text style={styles.target}>{exerciseSetSummary(exercise)}</Text>
               </View>
               {shouldIncrease ? (
                 <View style={styles.increasePill}>
@@ -259,7 +267,8 @@ export function DayScreen({ navigation, route }: Props) {
               <View style={styles.tableHeader}>
                 <Text style={[styles.colSet, styles.headerText]}>SET</Text>
                 <Text style={[styles.colTarget, styles.headerText]}>TGT</Text>
-                <Text style={[styles.colTarget, styles.headerText]}>LAST</Text>
+                <Text style={[styles.colLast, styles.headerText]}>LAST</Text>
+                <Text style={[styles.colLastRpe, styles.headerText]}>L RPE</Text>
                 <Text style={[styles.colInput, styles.headerText]}>KG</Text>
                 <Text style={[styles.colInput, styles.headerText]}>REPS</Text>
                 <Text style={[styles.colInput, styles.headerText]}>RPE</Text>
@@ -268,45 +277,54 @@ export function DayScreen({ navigation, route }: Props) {
               {Array.from({ length: exercise.sets }).map((_, setIndex) => {
                 const key = logKey(exKey, setIndex);
                 const log = logs[key];
-                const last = lastWeights.get(key);
+                const lastRef = lastRefs.get(key);
+                const targetReps = targetRepsForSet(exercise, setIndex);
                 return (
-                  <View key={setIndex} style={styles.setRow}>
-                    <Text style={[styles.colSet, styles.setLabel]}>{setIndex + 1}</Text>
-                    <Text style={[styles.colTarget, styles.targetReps]}>{exercise.reps}</Text>
-                    <Text style={[styles.colTarget, styles.lastWeight]}>
-                      {exercise.bodyweight ? 'BW' : last != null ? String(last) : '–'}
-                    </Text>
-                    <TextInput
-                      style={[
-                        styles.colInput,
-                        styles.input,
-                        highlightMissing.has(key) && styles.inputMissing,
-                      ]}
-                      placeholder="–"
-                      placeholderTextColor={colors.muted}
-                      keyboardType="decimal-pad"
-                      value={log?.weight ?? ''}
-                      onChangeText={(t) => updateLog(key, { weight: t })}
-                      onBlur={() => persist(key, exKey, setIndex, exercise.reps)}
-                    />
-                    <TextInput
-                      style={[styles.colInput, styles.input]}
-                      placeholder="–"
-                      placeholderTextColor={colors.muted}
-                      keyboardType="number-pad"
-                      value={log?.reps ?? ''}
-                      onChangeText={(t) => updateLog(key, { reps: t })}
-                      onBlur={() => persist(key, exKey, setIndex, exercise.reps)}
-                    />
-                    <TextInput
-                      style={[styles.colInput, styles.input]}
-                      placeholder="/10"
-                      placeholderTextColor={colors.muted}
-                      keyboardType="decimal-pad"
-                      value={log?.rpe ?? ''}
-                      onChangeText={(t) => updateLog(key, { rpe: t })}
-                      onBlur={() => persist(key, exKey, setIndex, exercise.reps)}
-                    />
+                  <View key={setIndex}>
+                    <View style={styles.setRow}>
+                      <Text style={[styles.colSet, styles.setLabel]}>{setIndex + 1}</Text>
+                      <Text style={[styles.colTarget, styles.targetReps]}>{targetReps}</Text>
+                      <Text style={[styles.colLast, styles.lastWeight]}>
+                        {exercise.bodyweight ? 'BW' : lastRef?.weight != null ? String(lastRef.weight) : '–'}
+                      </Text>
+                      <Text style={[styles.colLastRpe, styles.lastRpe]}>
+                        {formatLastRpe(lastRef?.rpe)}
+                      </Text>
+                      <TextInput
+                        style={[
+                          styles.colInput,
+                          styles.input,
+                          highlightMissing.has(key) && styles.inputMissing,
+                        ]}
+                        placeholder="–"
+                        placeholderTextColor={colors.muted}
+                        keyboardType="decimal-pad"
+                        value={log?.weight ?? ''}
+                        onChangeText={(t) => updateLog(key, { weight: t })}
+                        onBlur={() => persist(key, exKey, setIndex, targetReps)}
+                      />
+                      <TextInput
+                        style={[styles.colInput, styles.input]}
+                        placeholder="–"
+                        placeholderTextColor={colors.muted}
+                        keyboardType="number-pad"
+                        value={log?.reps ?? ''}
+                        onChangeText={(t) => updateLog(key, { reps: t })}
+                        onBlur={() => persist(key, exKey, setIndex, targetReps)}
+                      />
+                      <TextInput
+                        style={[styles.colInput, styles.input]}
+                        placeholder="/10"
+                        placeholderTextColor={colors.muted}
+                        keyboardType="decimal-pad"
+                        value={log?.rpe ?? ''}
+                        onChangeText={(t) => updateLog(key, { rpe: t })}
+                        onBlur={() => persist(key, exKey, setIndex, targetReps)}
+                      />
+                    </View>
+                    {exercise.dividerAfterSet === setIndex + 1 ? (
+                      <View style={styles.setDivider} />
+                    ) : null}
                   </View>
                 );
               })}
@@ -416,9 +434,9 @@ const styles = StyleSheet.create({
   },
   headerText: {
     color: colors.muted,
-    fontSize: 11,
+    fontSize: 10,
     fontFamily: fonts.semibold,
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
     textAlign: 'center',
   },
   setRow: {
@@ -426,43 +444,62 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: spacing.sm,
   },
+  setDivider: {
+    height: 1,
+    backgroundColor: colors.accent,
+    opacity: 0.45,
+    marginVertical: spacing.sm,
+  },
   colSet: {
-    width: 28,
+    width: 24,
     textAlign: 'center',
   },
   colTarget: {
-    width: 40,
+    width: 32,
+    textAlign: 'center',
+  },
+  colLast: {
+    width: 36,
+    textAlign: 'center',
+  },
+  colLastRpe: {
+    width: 30,
     textAlign: 'center',
   },
   colInput: {
     flex: 1,
-    marginHorizontal: spacing.sm / 2,
+    marginHorizontal: 2,
   },
   setLabel: {
     color: colors.text,
-    fontSize: 15,
+    fontSize: 14,
     fontFamily: fonts.semibold,
   },
   targetReps: {
     color: colors.muted,
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: fonts.semibold,
   },
   lastWeight: {
     color: colors.text,
-    fontSize: 14,
+    fontSize: 13,
+    fontFamily: fonts.semibold,
+  },
+  lastRpe: {
+    color: colors.muted,
+    fontSize: 13,
     fontFamily: fonts.semibold,
   },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 8,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
     color: colors.text,
     backgroundColor: colors.bg,
     textAlign: 'center',
-    fontSize: 15,
+    fontSize: 14,
     fontFamily: fonts.regular,
   },
   inputMissing: {

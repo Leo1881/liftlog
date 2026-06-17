@@ -49,6 +49,22 @@ export async function getOrCreateTodaySession(dayId: string): Promise<string> {
   return id;
 }
 
+/** Completed session count per day_id (Complete workout pressed, including finish anyway). */
+export async function getCompletedSessionCounts(): Promise<Map<string, number>> {
+  const db = getDatabase();
+  const rows = await db.getAllAsync<{ day_id: string; count: number }>(
+    `SELECT day_id, COUNT(*) AS count
+     FROM workout_sessions
+     WHERE completed_at IS NOT NULL
+     GROUP BY day_id`,
+  );
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    map.set(row.day_id, row.count);
+  }
+  return map;
+}
+
 /** Date-stamps a session as complete (or re-stamps it) and returns the timestamp. */
 export async function completeSession(sessionId: string): Promise<number> {
   const db = getDatabase();
@@ -89,15 +105,26 @@ export async function loadSessionLogs(sessionId: string): Promise<Map<string, St
   return map;
 }
 
-/** Most recent weight used for each set from an earlier session of the SAME day,
- *  keyed `${exercise_key}:${set_index}`. Scoped per day so differing rep schemes don't mix. */
-export async function loadLastWeights(
+export type LastSetRef = {
+  weight: number | null;
+  rpe: number | null;
+};
+
+/** Most recent weight and RPE for each set from an earlier session of the SAME day,
+ *  keyed `${exercise_key}:${set_index}`. Values come from the same logged set row.
+ *  Scoped per day so differing rep schemes don't mix. */
+export async function loadLastSetRefs(
   currentSessionId: string,
   dayId: string,
-): Promise<Map<string, number>> {
+): Promise<Map<string, LastSetRef>> {
   const db = getDatabase();
-  const rows = await db.getAllAsync<{ exercise_key: string; set_index: number; weight: number }>(
-    `SELECT sl.exercise_key, sl.set_index, sl.weight
+  const rows = await db.getAllAsync<{
+    exercise_key: string;
+    set_index: number;
+    weight: number | null;
+    rpe: number | null;
+  }>(
+    `SELECT sl.exercise_key, sl.set_index, sl.weight, sl.rpe
      FROM set_logs sl
      JOIN workout_sessions ws ON ws.id = sl.session_id
      WHERE sl.weight IS NOT NULL AND sl.session_id != ? AND ws.day_id = ?
@@ -105,11 +132,11 @@ export async function loadLastWeights(
     currentSessionId,
     dayId,
   );
-  const map = new Map<string, number>();
+  const map = new Map<string, LastSetRef>();
   for (const row of rows) {
     const key = `${row.exercise_key}:${row.set_index}`;
     if (!map.has(key)) {
-      map.set(key, row.weight);
+      map.set(key, { weight: row.weight, rpe: row.rpe });
     }
   }
   return map;

@@ -1,7 +1,10 @@
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useCallback, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { getCompletedSessionCounts } from '../db/workouts';
 import type { RootStackParamList } from '../navigation/types';
 import { ROUTINE } from '../routine';
 import { colors, fonts, spacing } from '../theme';
@@ -12,8 +15,29 @@ type Props = {
   navigation: Nav;
 };
 
+function sessionPillLabel(count: number): string {
+  return count === 1 ? '1 Session' : `${count} Sessions`;
+}
+
 export function HomeScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
+  const [completedCounts, setCompletedCounts] = useState<Map<string, number>>(new Map());
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      void (async () => {
+        const counts = await getCompletedSessionCounts();
+        if (active) {
+          setCompletedCounts(counts);
+        }
+      })();
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
   return (
     <View style={[styles.container, { paddingBottom: insets.bottom + spacing.md }]}>
       <FlatList
@@ -28,7 +52,14 @@ export function HomeScreen({ navigation }: Props) {
             <View style={styles.card}>
               <View style={styles.accentBar} />
               <View style={styles.cardBody}>
-                <Text style={styles.cardTitle}>{item.label}</Text>
+                <View style={styles.titleRow}>
+                  <Text style={styles.cardTitle}>{item.label}</Text>
+                  <View style={styles.sessionPill}>
+                    <Text style={styles.sessionPillText}>
+                      {sessionPillLabel(completedCounts.get(item.id) ?? 0)}
+                    </Text>
+                  </View>
+                </View>
                 <Text style={styles.cardSub}>{item.exercises.length} exercises</Text>
               </View>
               <Text style={styles.chevron}>›</Text>
@@ -86,10 +117,37 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.lg,
     paddingHorizontal: spacing.lg,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   cardTitle: {
     color: colors.text,
     fontSize: 18,
+    lineHeight: 22,
     fontFamily: fonts.bold,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+  },
+  sessionPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: colors.successBg,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    marginLeft: spacing.lg,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sessionPillText: {
+    color: colors.accent,
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: fonts.semibold,
+    letterSpacing: 0.2,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   cardSub: {
     color: colors.muted,

@@ -1,8 +1,12 @@
 export type RoutineExercise = {
   name: string;
   sets: number;
-  /** Kept as text so values like "20 x 60" (intervals) display correctly. */
+  /** Default target reps when all sets share the same scheme. */
   reps: string;
+  /** Per-set target reps (length must equal `sets`). Overrides `reps` for each row. */
+  setReps?: string[];
+  /** Render a divider after this set number (1-based), e.g. between warm-up and working sets. */
+  dividerAfterSet?: number;
   /** Bodyweight movement (e.g. Dips) — weight is optional/added load. */
   bodyweight?: boolean;
 };
@@ -74,10 +78,36 @@ export const ROUTINE: RoutineDay[] = [
       { name: 'Face Pulls', sets: 3, reps: '15' },
     ],
   },
+  {
+    id: 'day-6',
+    label: 'Day 6',
+    exercises: [
+      {
+        name: 'Deadlift',
+        sets: 11,
+        reps: '5',
+        setReps: ['10', '10', '5', '5', '3', '3', '2', '2', '5', '5', '5'],
+        dividerAfterSet: 8,
+      },
+    ],
+  },
 ];
 
 export function getRoutineDay(id: string): RoutineDay | undefined {
   return ROUTINE.find((d) => d.id === id);
+}
+
+/** Target reps for one set row (supports per-set schemes via `setReps`). */
+export function targetRepsForSet(exercise: RoutineExercise, setIndex: number): string {
+  return exercise.setReps?.[setIndex] ?? exercise.reps;
+}
+
+/** Short label for the exercise block header. */
+export function exerciseSetSummary(exercise: RoutineExercise): string {
+  if (exercise.setReps?.length) {
+    return `${exercise.sets} sets`;
+  }
+  return `${exercise.sets} × ${exercise.reps}`;
 }
 
 /** Unique exercise names across all days, in first-seen order. */
