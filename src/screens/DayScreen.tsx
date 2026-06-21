@@ -27,6 +27,7 @@ import {
 } from '../db/workouts';
 import type { RootStackParamList } from '../navigation/types';
 import { exerciseSetSummary, getRoutineDay, targetRepsForSet } from '../routine';
+import type { RoutineExercise } from '../routine';
 import { colors, fonts, spacing } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Day'>;
@@ -78,9 +79,28 @@ function formatLastRpe(rpe: number | null | undefined): string {
   return Number.isInteger(rpe) ? String(rpe) : String(Math.round(rpe * 10) / 10);
 }
 
-function toValues(log: SetLog): SetValues {
+function formatLastWeight(exercise: RoutineExercise, lastRef?: { weight: number | null; rpe: number | null }): string {
+  const w = lastRef?.weight;
+  if (exercise.bodyweight) {
+    return w != null && w > 0 ? String(w) : 'BW';
+  }
+  return w != null ? String(w) : '–';
+}
+
+function storedWeightDisplay(weight: number | null | undefined, bodyweight?: boolean): string {
+  if (weight == null || (bodyweight && weight <= 0)) {
+    return '';
+  }
+  return String(weight);
+}
+
+function toValues(log: SetLog, bodyweight?: boolean): SetValues {
+  let weight = parseOptionalFloat(log.weight);
+  if (bodyweight && (weight === 0 || weight === null)) {
+    weight = null;
+  }
   return {
-    weight: parseOptionalFloat(log.weight),
+    weight,
     reps: parseOptionalInt(log.reps),
     rpe: parseOptionalFloat(log.rpe),
   };
@@ -129,7 +149,7 @@ export function DayScreen({ navigation, route }: Props) {
           const row = stored.get(key);
           const targetReps = targetRepsForSet(exercise, i);
           initial[key] = {
-            weight: row?.weight != null ? String(row.weight) : '',
+            weight: storedWeightDisplay(row?.weight, exercise.bodyweight),
             reps: row?.reps != null ? String(row.reps) : targetReps,
             rpe: row?.rpe != null ? String(row.rpe) : '',
           };
@@ -164,13 +184,13 @@ export function DayScreen({ navigation, route }: Props) {
   }, []);
 
   const persist = useCallback(
-    (key: string, exKey: string, setIndex: number, targetReps: string) => {
+    (key: string, exKey: string, setIndex: number, targetReps: string, bodyweight?: boolean) => {
       const sessionId = sessionIdRef.current;
       if (!sessionId) {
         return;
       }
       const log = logs[key] ?? EMPTY_LOG;
-      void saveSetLog(sessionId, exKey, setIndex, targetReps, toValues(log));
+      void saveSetLog(sessionId, exKey, setIndex, targetReps, toValues(log, bodyweight));
     },
     [logs],
   );
@@ -285,7 +305,7 @@ export function DayScreen({ navigation, route }: Props) {
                       <Text style={[styles.colSet, styles.setLabel]}>{setIndex + 1}</Text>
                       <Text style={[styles.colTarget, styles.targetReps]}>{targetReps}</Text>
                       <Text style={[styles.colLast, styles.lastWeight]}>
-                        {exercise.bodyweight ? 'BW' : lastRef?.weight != null ? String(lastRef.weight) : '–'}
+                        {formatLastWeight(exercise, lastRef)}
                       </Text>
                       <Text style={[styles.colLastRpe, styles.lastRpe]}>
                         {formatLastRpe(lastRef?.rpe)}
@@ -296,12 +316,12 @@ export function DayScreen({ navigation, route }: Props) {
                           styles.input,
                           highlightMissing.has(key) && styles.inputMissing,
                         ]}
-                        placeholder="–"
+                        placeholder={exercise.bodyweight ? '+kg' : '–'}
                         placeholderTextColor={colors.muted}
                         keyboardType="decimal-pad"
                         value={log?.weight ?? ''}
                         onChangeText={(t) => updateLog(key, { weight: t })}
-                        onBlur={() => persist(key, exKey, setIndex, targetReps)}
+                        onBlur={() => persist(key, exKey, setIndex, targetReps, exercise.bodyweight)}
                       />
                       <TextInput
                         style={[styles.colInput, styles.input]}
@@ -310,7 +330,7 @@ export function DayScreen({ navigation, route }: Props) {
                         keyboardType="number-pad"
                         value={log?.reps ?? ''}
                         onChangeText={(t) => updateLog(key, { reps: t })}
-                        onBlur={() => persist(key, exKey, setIndex, targetReps)}
+                        onBlur={() => persist(key, exKey, setIndex, targetReps, exercise.bodyweight)}
                       />
                       <TextInput
                         style={[styles.colInput, styles.input]}
@@ -319,7 +339,7 @@ export function DayScreen({ navigation, route }: Props) {
                         keyboardType="decimal-pad"
                         value={log?.rpe ?? ''}
                         onChangeText={(t) => updateLog(key, { rpe: t })}
-                        onBlur={() => persist(key, exKey, setIndex, targetReps)}
+                        onBlur={() => persist(key, exKey, setIndex, targetReps, exercise.bodyweight)}
                       />
                     </View>
                     {exercise.dividerAfterSet === setIndex + 1 ? (
