@@ -54,11 +54,16 @@ export function HomeScreen({ navigation }: Props) {
               <View style={styles.cardBody}>
                 <View style={styles.titleRow}>
                   <Text style={styles.cardTitle}>{item.label}</Text>
-                  <View style={styles.sessionPill}>
+                  <Pressable
+                    style={styles.sessionPill}
+                    onPress={() =>
+                      navigation.navigate('DayHistory', { dayId: item.id, dayLabel: item.label })
+                    }
+                  >
                     <Text style={styles.sessionPillText}>
                       {sessionPillLabel(completedCounts.get(item.id) ?? 0)}
                     </Text>
-                  </View>
+                  </Pressable>
                 </View>
                 <Text style={styles.cardSub}>{item.exercises.length} exercises</Text>
               </View>

@@ -17,14 +17,26 @@ export type SetValues = {
   rpe: number | null;
 };
 
+/** Parse a stored/logged weight as a finite positive number, or null if invalid. */
+export function coerceLoggedWeight(value: unknown): number | null {
+  if (value == null) {
+    return null;
+  }
+  const n = typeof value === 'number' ? value : parseFloat(String(value));
+  if (!Number.isFinite(n) || n <= 0) {
+    return null;
+  }
+  return n;
+}
+
 function startOfToday(): number {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
 
-/** Returns today's session for the given day, creating one if it doesn't exist yet. */
-export async function getOrCreateTodaySession(dayId: string): Promise<string> {
+/** Today's session for this day, if one already exists. */
+export async function getTodaySessionId(dayId: string): Promise<string | null> {
   const db = getDatabase();
   const start = startOfToday();
   const end = start + 24 * 60 * 60 * 1000;
@@ -36,9 +48,16 @@ export async function getOrCreateTodaySession(dayId: string): Promise<string> {
     start,
     end,
   );
+  return existing?.id ?? null;
+}
+
+/** Returns today's session for the given day, creating one if it doesn't exist yet. */
+export async function getOrCreateTodaySession(dayId: string): Promise<string> {
+  const existing = await getTodaySessionId(dayId);
   if (existing) {
-    return existing.id;
+    return existing;
   }
+  const db = getDatabase();
   const id = randomUUID();
   await db.runAsync(
     `INSERT INTO workout_sessions (id, day_id, started_at, completed_at) VALUES (?, ?, ?, NULL)`,
@@ -47,6 +66,34 @@ export async function getOrCreateTodaySession(dayId: string): Promise<string> {
     Date.now(),
   );
   return id;
+}
+
+export type DaySessionSummary = {
+  id: string;
+  started_at: number;
+  completed_at: number | null;
+};
+
+/** All logged sessions for a routine day, newest first. */
+export async function listSessionsForDay(dayId: string): Promise<DaySessionSummary[]> {
+  const db = getDatabase();
+  return db.getAllAsync<DaySessionSummary>(
+    `SELECT id, started_at, completed_at
+     FROM workout_sessions
+     WHERE day_id = ?
+     ORDER BY started_at DESC`,
+    dayId,
+  );
+}
+
+/** When a session was started, or null if missing. */
+export async function getSessionStartedAt(sessionId: string): Promise<number | null> {
+  const db = getDatabase();
+  const row = await db.getFirstAsync<{ started_at: number }>(
+    `SELECT started_at FROM workout_sessions WHERE id = ?`,
+    sessionId,
+  );
+  return row?.started_at ?? null;
 }
 
 /** Completed session count per day_id (Complete workout pressed, including finish anyway). */
@@ -138,6 +185,34 @@ export async function loadLastSetRefs(
     if (!map.has(key)) {
       map.set(key, { weight: row.weight, rpe: row.rpe });
     }
+  }
+  return map;
+}
+
+/** Ignore obvious typos (e.g. 8845) when computing best — still saved in set logs. */
+const MAX_BEST_WEIGHT_KG = 600;
+
+/** Highest logged weight per exercise across all days, keyed by exercise_key. */
+export async function getExerciseTopWeights(keys: string[]): Promise<Map<string, number>> {
+  if (keys.length === 0) {
+    return new Map();
+  }
+  const db = getDatabase();
+  const placeholders = keys.map(() => '?').join(',');
+  const rows = await db.getAllAsync<{ exercise_key: string; weight: unknown }>(
+    `SELECT exercise_key, weight
+     FROM set_logs
+     WHERE exercise_key IN (${placeholders}) AND weight IS NOT NULL`,
+    ...keys,
+  );
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const weight = coerceLoggedWeight(row.weight);
+    if (weight == null || weight > MAX_BEST_WEIGHT_KG) {
+      continue;
+    }
+    const current = map.get(row.exercise_key);
+    map.set(row.exercise_key, current == null ? weight : Math.max(current, weight));
   }
   return map;
 }

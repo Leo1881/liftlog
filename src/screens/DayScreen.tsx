@@ -16,10 +16,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   completeSession,
+  coerceLoggedWeight,
   exerciseKey,
+  getExerciseTopWeights,
   getIncreaseFlags,
   getOrCreateTodaySession,
   getSessionCompletedAt,
+  getSessionStartedAt,
   loadLastSetRefs,
   loadSessionLogs,
   saveSetLog,
@@ -72,6 +75,15 @@ function formatCompleted(ts: number): string {
   });
 }
 
+function formatSessionDate(ts: number): string {
+  return new Date(ts).toLocaleString(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
 function formatLastRpe(rpe: number | null | undefined): string {
   if (rpe == null) {
     return '–';
@@ -85,6 +97,22 @@ function formatLastWeight(exercise: RoutineExercise, lastRef?: { weight: number 
     return w != null && w > 0 ? String(w) : 'BW';
   }
   return w != null ? String(w) : '–';
+}
+
+function formatDisplayWeight(n: number): string {
+  const rounded = Math.round(n * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function formatTopWeight(exercise: RoutineExercise, top?: number): string | null {
+  const weight = coerceLoggedWeight(top);
+  if (weight == null) {
+    return null;
+  }
+  if (exercise.bodyweight) {
+    return `+${formatDisplayWeight(weight)}`;
+  }
+  return formatDisplayWeight(weight);
 }
 
 function storedWeightDisplay(weight: number | null | undefined, bodyweight?: boolean): string {
@@ -107,7 +135,7 @@ function toValues(log: SetLog, bodyweight?: boolean): SetValues {
 }
 
 export function DayScreen({ navigation, route }: Props) {
-  const { dayId } = route.params;
+  const { dayId, sessionId: sessionIdParam } = route.params;
   const day = getRoutineDay(dayId);
   const insets = useSafeAreaInsets();
 
@@ -117,24 +145,43 @@ export function DayScreen({ navigation, route }: Props) {
     new Map(),
   );
   const [increaseFlags, setIncreaseFlags] = useState<Set<string>>(new Set());
+  const [topWeights, setTopWeights] = useState<Map<string, number>>(new Map());
   const [completedAt, setCompletedAt] = useState<number | null>(null);
+  const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
   const [highlightMissing, setHighlightMissing] = useState<Set<string>>(() => new Set());
   const sessionIdRef = useRef<string | null>(null);
+  const editingPastSession = sessionIdParam != null;
 
   useLayoutEffect(() => {
-    navigation.setOptions({ title: day?.label ?? 'Day' });
-  }, [navigation, day]);
+    navigation.setOptions({
+      title: day?.label ?? 'Day',
+      headerRight: () => (
+        <Pressable
+          onPress={() =>
+            navigation.navigate('DayHistory', { dayId, dayLabel: day?.label ?? 'Day' })
+          }
+          hitSlop={8}
+        >
+          <Text style={styles.headerLink}>History</Text>
+        </Pressable>
+      ),
+    });
+  }, [navigation, day, dayId]);
 
   useEffect(() => {
     let active = true;
     void (async () => {
-      const sessionId = await getOrCreateTodaySession(dayId);
+      setLoading(true);
+      const sessionId = sessionIdParam ?? (await getOrCreateTodaySession(dayId));
       sessionIdRef.current = sessionId;
-      const [stored, last, flags, completed] = await Promise.all([
+      const exerciseKeys = (day?.exercises ?? []).map((exercise) => exerciseKey(exercise.name));
+      const [stored, last, flags, completed, tops, startedAt] = await Promise.all([
         loadSessionLogs(sessionId),
         loadLastSetRefs(sessionId, dayId),
         getIncreaseFlags(dayId),
         getSessionCompletedAt(sessionId),
+        getExerciseTopWeights(exerciseKeys),
+        getSessionStartedAt(sessionId),
       ]);
       if (!active) {
         return;
@@ -158,13 +205,15 @@ export function DayScreen({ navigation, route }: Props) {
       setLogs(initial);
       setLastRefs(last);
       setIncreaseFlags(flags);
+      setTopWeights(tops);
       setCompletedAt(completed);
+      setSessionStartedAt(startedAt);
       setLoading(false);
     })();
     return () => {
       active = false;
     };
-  }, [dayId]);
+  }, [dayId, sessionIdParam, day?.exercises]);
 
   const updateLog = useCallback((key: string, patch: Partial<SetLog>) => {
     setLogs((prev) => ({
@@ -190,7 +239,27 @@ export function DayScreen({ navigation, route }: Props) {
         return;
       }
       const log = logs[key] ?? EMPTY_LOG;
-      void saveSetLog(sessionId, exKey, setIndex, targetReps, toValues(log, bodyweight));
+      const values = toValues(log, bodyweight);
+      void saveSetLog(sessionId, exKey, setIndex, targetReps, values).then(async () => {
+        const weight = coerceLoggedWeight(values.weight);
+        if (weight == null || (bodyweight && weight <= 0)) {
+          return;
+        }
+        const tops = await getExerciseTopWeights([exKey]);
+        const top = tops.get(exKey);
+        if (top == null) {
+          return;
+        }
+        setTopWeights((prev) => {
+          const current = prev.get(exKey);
+          if (current === top) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.set(exKey, top);
+          return next;
+        });
+      });
     },
     [logs],
   );
@@ -266,9 +335,21 @@ export function DayScreen({ navigation, route }: Props) {
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.xl }]}
         keyboardShouldPersistTaps="handled"
       >
+        {editingPastSession && sessionStartedAt != null ? (
+          <View style={styles.editingBanner}>
+            <Text style={styles.editingBannerText}>
+              Editing · {formatSessionDate(sessionStartedAt)}
+            </Text>
+            <Pressable onPress={() => navigation.replace('Day', { dayId })}>
+              <Text style={styles.editingBannerLink}>Back to today</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         {day.exercises.map((exercise, exerciseIndex) => {
           const exKey = exerciseKey(exercise.name);
           const shouldIncrease = increaseFlags.has(exKey);
+          const topLabel = formatTopWeight(exercise, topWeights.get(exKey));
           return (
             <View
               key={`${exercise.name}-${exerciseIndex}`}
@@ -276,7 +357,14 @@ export function DayScreen({ navigation, route }: Props) {
             >
               <View style={styles.blockHeader}>
                 <Text style={styles.exerciseName}>{exercise.name}</Text>
-                <Text style={styles.target}>{exerciseSetSummary(exercise)}</Text>
+                <View style={styles.blockMeta}>
+                  <Text style={styles.target}>{exerciseSetSummary(exercise)}</Text>
+                  {topLabel != null ? (
+                    <View style={styles.bestPill}>
+                      <Text style={styles.bestPillText}>Best {topLabel} kg</Text>
+                    </View>
+                  ) : null}
+                </View>
               </View>
               {shouldIncrease ? (
                 <View style={styles.increasePill}>
@@ -402,6 +490,34 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: fonts.regular,
   },
+  headerLink: {
+    color: colors.accent,
+    fontSize: 15,
+    fontFamily: fonts.semibold,
+    paddingHorizontal: spacing.sm,
+  },
+  editingBanner: {
+    backgroundColor: colors.cardAlt,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  editingBannerText: {
+    color: colors.text,
+    fontSize: 14,
+    fontFamily: fonts.semibold,
+    flex: 1,
+  },
+  editingBannerLink: {
+    color: colors.accent,
+    fontSize: 14,
+    fontFamily: fonts.bold,
+  },
   block: {
     backgroundColor: colors.card,
     borderRadius: 12,
@@ -430,20 +546,36 @@ const styles = StyleSheet.create({
   blockHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.md,
+    alignItems: 'flex-start',
+    gap: spacing.md,
+    marginBottom: spacing.lg,
   },
   exerciseName: {
+    flex: 1,
     color: colors.text,
     fontSize: 17,
     fontFamily: fonts.bold,
-    flexShrink: 1,
-    paddingRight: spacing.md,
+    paddingRight: spacing.sm,
+  },
+  blockMeta: {
+    alignItems: 'flex-end',
+    gap: 6,
   },
   target: {
     color: colors.accent,
     fontSize: 15,
     fontFamily: fonts.bold,
+  },
+  bestPill: {
+    backgroundColor: colors.cardAlt,
+    borderRadius: 6,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  bestPillText: {
+    color: colors.subtle,
+    fontSize: 12,
+    fontFamily: fonts.semibold,
   },
   tableHeader: {
     flexDirection: 'row',

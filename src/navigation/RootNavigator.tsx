@@ -2,6 +2,7 @@ import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Image, StyleSheet } from 'react-native';
 
+import { DayHistoryScreen } from '../screens/DayHistoryScreen';
 import { DayScreen } from '../screens/DayScreen';
 import { ExerciseProgressScreen } from '../screens/ExerciseProgressScreen';
 import { HomeScreen } from '../screens/HomeScreen';
@@ -57,6 +58,11 @@ export function RootNavigator() {
           }}
         />
         <Stack.Screen name="Day" component={DayScreen} />
+        <Stack.Screen
+          name="DayHistory"
+          component={DayHistoryScreen}
+          options={({ route }) => ({ title: `${route.params.dayLabel} history` })}
+        />
         <Stack.Screen name="Progress" component={ProgressScreen} options={{ title: 'Progress' }} />
         <Stack.Screen name="ExerciseProgress" component={ExerciseProgressScreen} />
       </Stack.Navigator>
