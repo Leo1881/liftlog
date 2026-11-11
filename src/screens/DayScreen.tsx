@@ -29,8 +29,13 @@ import {
   type SetValues,
 } from '../db/workouts';
 import type { RootStackParamList } from '../navigation/types';
-import { exerciseSetSummary, getRoutineDay, targetRepsForSet } from '../routine';
-import type { RoutineExercise } from '../routine';
+import {
+  exerciseSetSummary,
+  getRoutineDay,
+  routineSlots,
+  targetRepsForSet,
+} from '../routine';
+import type { ExerciseSlot, RoutineExercise } from '../routine';
 import { colors, fonts, spacing } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Day'>;
@@ -310,6 +315,123 @@ export function DayScreen({ navigation, route }: Props) {
     );
   }, [day, logs, finishSession]);
 
+  function renderExerciseBlock(exercise: RoutineExercise, exerciseIndex: number) {
+    const exKey = exerciseKey(exercise.name);
+    const shouldIncrease = increaseFlags.has(exKey);
+    const topLabel = formatTopWeight(exercise, topWeights.get(exKey));
+    return (
+      <View
+        key={`${exercise.name}-${exerciseIndex}`}
+        style={[styles.block, shouldIncrease && styles.blockIncrease]}
+      >
+        <View style={styles.blockHeader}>
+          <Text style={styles.exerciseName}>{exercise.name}</Text>
+          <View style={styles.blockMeta}>
+            <Text style={styles.target}>{exerciseSetSummary(exercise)}</Text>
+            {topLabel != null ? (
+              <View style={styles.bestPill}>
+                <Text style={styles.bestPillText}>Best {topLabel} kg</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        {shouldIncrease ? (
+          <View style={styles.increasePill}>
+            <Text style={styles.increasePillText}>Increase weight</Text>
+          </View>
+        ) : null}
+
+        <View style={styles.tableHeader}>
+          <Text style={[styles.colSet, styles.headerText]}>SET</Text>
+          <Text style={[styles.colTarget, styles.headerText]}>TGT</Text>
+          <Text style={[styles.colLast, styles.headerText]}>LAST</Text>
+          <Text style={[styles.colLastRpe, styles.headerText]}>L RPE</Text>
+          <Text style={[styles.colInput, styles.headerText]}>KG</Text>
+          <Text style={[styles.colInput, styles.headerText]}>REPS</Text>
+          <Text style={[styles.colInput, styles.headerText]}>RPE</Text>
+        </View>
+
+        {Array.from({ length: exercise.sets }).map((_, setIndex) => {
+          const key = logKey(exKey, setIndex);
+          const log = logs[key];
+          const lastRef = lastRefs.get(key);
+          const targetReps = targetRepsForSet(exercise, setIndex);
+          return (
+            <View key={setIndex}>
+              <View style={styles.setRow}>
+                <Text style={[styles.colSet, styles.setLabel]}>{setIndex + 1}</Text>
+                <Text style={[styles.colTarget, styles.targetReps]}>{targetReps}</Text>
+                <Text style={[styles.colLast, styles.lastWeight]}>
+                  {formatLastWeight(exercise, lastRef)}
+                </Text>
+                <Text style={[styles.colLastRpe, styles.lastRpe]}>
+                  {formatLastRpe(lastRef?.rpe)}
+                </Text>
+                <TextInput
+                  style={[
+                    styles.colInput,
+                    styles.input,
+                    highlightMissing.has(key) && styles.inputMissing,
+                  ]}
+                  placeholder={exercise.bodyweight ? '+kg' : '–'}
+                  placeholderTextColor={colors.muted}
+                  keyboardType="decimal-pad"
+                  value={log?.weight ?? ''}
+                  onChangeText={(t) => updateLog(key, { weight: t })}
+                  onBlur={() => persist(key, exKey, setIndex, targetReps, exercise.bodyweight)}
+                />
+                <TextInput
+                  style={[styles.colInput, styles.input]}
+                  placeholder="–"
+                  placeholderTextColor={colors.muted}
+                  keyboardType="number-pad"
+                  value={log?.reps ?? ''}
+                  onChangeText={(t) => updateLog(key, { reps: t })}
+                  onBlur={() => persist(key, exKey, setIndex, targetReps, exercise.bodyweight)}
+                />
+                <TextInput
+                  style={[styles.colInput, styles.input]}
+                  placeholder="/10"
+                  placeholderTextColor={colors.muted}
+                  keyboardType="decimal-pad"
+                  value={log?.rpe ?? ''}
+                  onChangeText={(t) => updateLog(key, { rpe: t })}
+                  onBlur={() => persist(key, exKey, setIndex, targetReps, exercise.bodyweight)}
+                />
+              </View>
+              {exercise.dividerAfterSet === setIndex + 1 ? (
+                <View style={styles.setDivider} />
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+    );
+  }
+
+  function renderSlot(slot: ExerciseSlot) {
+    switch (slot.kind) {
+      case 'single':
+        return renderExerciseBlock(slot.exercise, slot.index);
+      case 'superset': {
+        const first = slot.items[0]?.exercise;
+        const each = first ? `${exerciseSetSummary(first)} each` : '';
+        return (
+          <View key={slot.group} style={styles.supersetWrap}>
+            <Text style={styles.supersetLabel}>
+              {each ? `Superset · ${each}` : 'Superset'}
+            </Text>
+            {slot.items.map((item) => renderExerciseBlock(item.exercise, item.index))}
+          </View>
+        );
+      }
+      default: {
+        const _exhaustive: never = slot;
+        return _exhaustive;
+      }
+    }
+  }
+
   if (!day) {
     return (
       <View style={styles.centered}>
@@ -346,99 +468,7 @@ export function DayScreen({ navigation, route }: Props) {
           </View>
         ) : null}
 
-        {day.exercises.map((exercise, exerciseIndex) => {
-          const exKey = exerciseKey(exercise.name);
-          const shouldIncrease = increaseFlags.has(exKey);
-          const topLabel = formatTopWeight(exercise, topWeights.get(exKey));
-          return (
-            <View
-              key={`${exercise.name}-${exerciseIndex}`}
-              style={[styles.block, shouldIncrease && styles.blockIncrease]}
-            >
-              <View style={styles.blockHeader}>
-                <Text style={styles.exerciseName}>{exercise.name}</Text>
-                <View style={styles.blockMeta}>
-                  <Text style={styles.target}>{exerciseSetSummary(exercise)}</Text>
-                  {topLabel != null ? (
-                    <View style={styles.bestPill}>
-                      <Text style={styles.bestPillText}>Best {topLabel} kg</Text>
-                    </View>
-                  ) : null}
-                </View>
-              </View>
-              {shouldIncrease ? (
-                <View style={styles.increasePill}>
-                  <Text style={styles.increasePillText}>Increase weight</Text>
-                </View>
-              ) : null}
-
-              <View style={styles.tableHeader}>
-                <Text style={[styles.colSet, styles.headerText]}>SET</Text>
-                <Text style={[styles.colTarget, styles.headerText]}>TGT</Text>
-                <Text style={[styles.colLast, styles.headerText]}>LAST</Text>
-                <Text style={[styles.colLastRpe, styles.headerText]}>L RPE</Text>
-                <Text style={[styles.colInput, styles.headerText]}>KG</Text>
-                <Text style={[styles.colInput, styles.headerText]}>REPS</Text>
-                <Text style={[styles.colInput, styles.headerText]}>RPE</Text>
-              </View>
-
-              {Array.from({ length: exercise.sets }).map((_, setIndex) => {
-                const key = logKey(exKey, setIndex);
-                const log = logs[key];
-                const lastRef = lastRefs.get(key);
-                const targetReps = targetRepsForSet(exercise, setIndex);
-                return (
-                  <View key={setIndex}>
-                    <View style={styles.setRow}>
-                      <Text style={[styles.colSet, styles.setLabel]}>{setIndex + 1}</Text>
-                      <Text style={[styles.colTarget, styles.targetReps]}>{targetReps}</Text>
-                      <Text style={[styles.colLast, styles.lastWeight]}>
-                        {formatLastWeight(exercise, lastRef)}
-                      </Text>
-                      <Text style={[styles.colLastRpe, styles.lastRpe]}>
-                        {formatLastRpe(lastRef?.rpe)}
-                      </Text>
-                      <TextInput
-                        style={[
-                          styles.colInput,
-                          styles.input,
-                          highlightMissing.has(key) && styles.inputMissing,
-                        ]}
-                        placeholder={exercise.bodyweight ? '+kg' : '–'}
-                        placeholderTextColor={colors.muted}
-                        keyboardType="decimal-pad"
-                        value={log?.weight ?? ''}
-                        onChangeText={(t) => updateLog(key, { weight: t })}
-                        onBlur={() => persist(key, exKey, setIndex, targetReps, exercise.bodyweight)}
-                      />
-                      <TextInput
-                        style={[styles.colInput, styles.input]}
-                        placeholder="–"
-                        placeholderTextColor={colors.muted}
-                        keyboardType="number-pad"
-                        value={log?.reps ?? ''}
-                        onChangeText={(t) => updateLog(key, { reps: t })}
-                        onBlur={() => persist(key, exKey, setIndex, targetReps, exercise.bodyweight)}
-                      />
-                      <TextInput
-                        style={[styles.colInput, styles.input]}
-                        placeholder="/10"
-                        placeholderTextColor={colors.muted}
-                        keyboardType="decimal-pad"
-                        value={log?.rpe ?? ''}
-                        onChangeText={(t) => updateLog(key, { rpe: t })}
-                        onBlur={() => persist(key, exKey, setIndex, targetReps, exercise.bodyweight)}
-                      />
-                    </View>
-                    {exercise.dividerAfterSet === setIndex + 1 ? (
-                      <View style={styles.setDivider} />
-                    ) : null}
-                  </View>
-                );
-              })}
-            </View>
-          );
-        })}
+        {routineSlots(day).map((slot) => renderSlot(slot))}
 
         {completedAt != null ? (
           <View style={styles.completedBadge}>
@@ -517,6 +547,21 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontSize: 14,
     fontFamily: fonts.bold,
+  },
+  supersetWrap: {
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: colors.cardAlt,
+  },
+  supersetLabel: {
+    color: colors.accent,
+    fontSize: 12,
+    fontFamily: fonts.extrabold,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
   block: {
     backgroundColor: colors.card,

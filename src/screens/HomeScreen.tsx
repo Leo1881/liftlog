@@ -1,12 +1,13 @@
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { shareWorkoutExport } from '../db/export';
 import { getCompletedSessionCounts } from '../db/workouts';
 import type { RootStackParamList } from '../navigation/types';
-import { ROUTINE } from '../routine';
+import { ROUTINE, routineSlotCount } from '../routine';
 import { colors, fonts, spacing } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Home'>;
@@ -22,6 +23,7 @@ function sessionPillLabel(count: number): string {
 export function HomeScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const [completedCounts, setCompletedCounts] = useState<Map<string, number>>(new Map());
+  const [exporting, setExporting] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -37,6 +39,18 @@ export function HomeScreen({ navigation }: Props) {
       };
     }, []),
   );
+
+  const onExport = useCallback(() => {
+    setExporting(true);
+    void shareWorkoutExport()
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : 'Export failed.';
+        Alert.alert('Export failed', message);
+      })
+      .finally(() => {
+        setExporting(false);
+      });
+  }, []);
 
   return (
     <View style={[styles.container, { paddingBottom: insets.bottom + spacing.md }]}>
@@ -65,7 +79,7 @@ export function HomeScreen({ navigation }: Props) {
                     </Text>
                   </Pressable>
                 </View>
-                <Text style={styles.cardSub}>{item.exercises.length} exercises</Text>
+                <Text style={styles.cardSub}>{routineSlotCount(item)} exercises</Text>
               </View>
               <Text style={styles.chevron}>›</Text>
             </View>
@@ -74,6 +88,17 @@ export function HomeScreen({ navigation }: Props) {
       />
       <Pressable style={styles.progressBtn} onPress={() => navigation.navigate('Progress')}>
         <Text style={styles.progressBtnText}>View progress</Text>
+      </Pressable>
+      <Pressable
+        style={[styles.exportBtn, exporting && styles.exportBtnDisabled]}
+        onPress={onExport}
+        disabled={exporting}
+      >
+        {exporting ? (
+          <ActivityIndicator color={colors.muted} size="small" />
+        ) : (
+          <Text style={styles.exportBtnText}>Export data (JSON)</Text>
+        )}
       </Pressable>
     </View>
   );
@@ -179,6 +204,25 @@ const styles = StyleSheet.create({
   progressBtnText: {
     color: colors.accent,
     fontFamily: fonts.bold,
+    fontSize: 15,
+  },
+  exportBtn: {
+    backgroundColor: colors.card,
+    borderRadius: 10,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: spacing.sm,
+    minHeight: 48,
+    justifyContent: 'center',
+  },
+  exportBtnDisabled: {
+    opacity: 0.6,
+  },
+  exportBtnText: {
+    color: colors.muted,
+    fontFamily: fonts.semibold,
     fontSize: 15,
   },
 });
